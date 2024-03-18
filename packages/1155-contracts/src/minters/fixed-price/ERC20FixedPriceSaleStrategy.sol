@@ -55,10 +55,15 @@ contract ERC20FixedPriceSaleStrategy is Enjoy, SaleStrategy, LimitedMintPerAddre
         address erc20Address;
     }
 
+    constructor(address _protocolFeeRecipient) {
+        protocolFeeRecipient = _protocolFeeRecipient;
+    }
+
     // target -> tokenId -> settings
     mapping(address => mapping(uint256 => SalesConfig)) internal salesConfigs;
-
     using SaleCommandHelper for ICreatorCommands.CommandSet;
+    // protocol fee recipient
+    address public protocolFeeRecipient;
 
     function contractURI() external pure override returns (string memory) {
         return "https://github.com/ourzora/zora-1155-contracts/";
@@ -89,7 +94,7 @@ contract ERC20FixedPriceSaleStrategy is Enjoy, SaleStrategy, LimitedMintPerAddre
         uint256,
         bytes calldata minterArguments
     ) external returns (ICreatorCommands.CommandSet memory commands) {
-        commands = _requestMint(target, tokenId, quantity,0,minterArguments);
+        commands = _requestMint(target, tokenId, quantity, 0, minterArguments);
     }
 
     /// @notice Mint batch function that 1) checks quantity and 2) keeps track of allowed tokens
@@ -97,7 +102,13 @@ contract ERC20FixedPriceSaleStrategy is Enjoy, SaleStrategy, LimitedMintPerAddre
     /// @param ids token ids to mint
     /// @param quantities of tokens to mint
     /// @param minterArguments as specified by 1155 standard
-    function requestMintBatch(address[] memory targets, uint256[] memory ids, uint256[] memory quantities, uint256, bytes[] calldata minterArguments) external {
+    function requestMintBatch(
+        address[] memory targets,
+        uint256[] memory ids,
+        uint256[] memory quantities,
+        uint256 unusedKey,
+        bytes[] calldata minterArguments
+    ) external {
         uint256 numTokens = ids.length;
 
         for (uint256 i; i < numTokens; ++i) {
@@ -126,6 +137,7 @@ contract ERC20FixedPriceSaleStrategy is Enjoy, SaleStrategy, LimitedMintPerAddre
         }
 
         SalesConfig storage config = salesConfigs[target][tokenId];
+        uint256 totalPrice = config.pricePerToken * quantity;
 
         // If sales config does not exist this first check will always fail.
 
@@ -140,10 +152,10 @@ contract ERC20FixedPriceSaleStrategy is Enjoy, SaleStrategy, LimitedMintPerAddre
         }
 
         // Check USDC approval amount
-        if (config.pricePerToken * quantity > IERC20(config.erc20Address).allowance(msg.sender, address(this))) {
+        if (totalPrice > IERC20(config.erc20Address).allowance(msg.sender, address(this))) {
             revert WrongValueSent();
         }
-        
+
         // Check minted per address limit
         if (config.maxTokensPerAddress > 0) {
             _requireMintNotOverLimitAndUpdate(config.maxTokensPerAddress, quantity, target, tokenId, mintTo);
@@ -154,14 +166,18 @@ contract ERC20FixedPriceSaleStrategy is Enjoy, SaleStrategy, LimitedMintPerAddre
         // Mint command
         IZoraCreator1155(target).adminMint(mintTo, tokenId, quantity, bytes(""));
 
-
         if (bytes(comment).length > 0) {
             emit MintComment(mintTo, target, tokenId, quantity, comment);
         }
 
+        uint256 protocolFee = totalPrice / 20;
+        uint256 creatorFee = totalPrice - protocolFee;
+        // transfer 5% protocol fee
+        IERC20(config.erc20Address).transferFrom(msg.sender, protocolFeeRecipient, protocolFee);
+
         // Should transfer funds if funds recipient is set to a non-default address
         if (shouldTransferFunds) {
-            IERC20(config.erc20Address).transferFrom(msg.sender, config.fundsRecipient, config.pricePerToken * quantity);
+            IERC20(config.erc20Address).transferFrom(msg.sender, config.fundsRecipient, creatorFee);
         }
     }
 

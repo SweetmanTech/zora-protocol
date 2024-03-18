@@ -18,6 +18,7 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
     ERC20FixedPriceSaleStrategy internal fixedPriceErc20;
     ERC20PresetMinterPauser internal usdc;
     address payable internal admin = payable(address(0x999));
+    address payable internal protocolFeeRecipient = payable(address(0x7777777));
     address internal zora;
     address internal tokenRecipient;
     address internal fundsRecipient;
@@ -36,7 +37,7 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
         Zora1155 proxy = new Zora1155(address(targetImpl));
         target = ZoraCreator1155Impl(payable(address(proxy)));
         target.initialize("test", "test", ICreatorRoyaltiesControl.RoyaltyConfiguration(0, 0, address(0)), admin, emptyData);
-        fixedPriceErc20 = new ERC20FixedPriceSaleStrategy();
+        fixedPriceErc20 = new ERC20FixedPriceSaleStrategy(protocolFeeRecipient);
         vm.prank(admin);
         usdc = new ERC20PresetMinterPauser("USDC", "USDC");
     }
@@ -52,11 +53,10 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
     function test_MintFlow() external {
         vm.startPrank(admin);
         uint256 newTokenId = target.setupNewToken("https://zora.co/testing/token.json", 10);
-    
+
         // GRANT MINTER ADMIN ROLE - adminMint (skip zora fee)
         target.addPermission(newTokenId, address(fixedPriceErc20), target.PERMISSION_BIT_ADMIN());
         uint96 pricePerToken = 100;
-        
 
         // CREATOR CALLS callSale on CREATORCROP
         vm.expectEmit(true, true, true, true);
@@ -90,7 +90,6 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
         );
         vm.stopPrank();
 
-        
         // AIRDROP USDC
         uint256 numTokens = 10;
         uint256 totalValue = (pricePerToken * numTokens);
@@ -101,14 +100,14 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
         vm.startPrank(tokenRecipient);
         usdc.approve(address(fixedPriceErc20), totalValue);
 
-        // COLLECTOR CALL requestMint 
+        // COLLECTOR CALL requestMint
         fixedPriceErc20.requestMint(address(target), newTokenId, numTokens, 0, abi.encode(tokenRecipient, ""));
 
         // VERIFY COLLECT
         assertEq(target.balanceOf(tokenRecipient, newTokenId), numTokens);
 
         // VERIFY USDC PAYMENT
-        assertEq(usdc.balanceOf(fundsRecipient), totalValue);
+        test_USDCPayouts(totalValue);
         vm.stopPrank();
     }
 
@@ -119,7 +118,7 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
         uint256 newTokenId = target.setupNewToken("https://zora.co/testing/token.json", numTokens);
         uint256 newTokenId2 = target.setupNewToken("https://zora.co/testing/token2.json", numTokens);
         uint256 newTokenId3 = target.setupNewToken("https://zora.co/testing/token3.json", numTokens);
-    
+
         address[] memory targets = new address[](3); // Dynamically-sized array
         uint256[] memory tokens = new uint256[](3); // Dynamically-sized array
         uint256[] memory quantities = new uint256[](3); // Dynamically-sized array
@@ -134,7 +133,7 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
         quantities[0] = numTokens;
         quantities[1] = numTokens;
         quantities[2] = numTokens;
-        
+
         for (uint256 i = 0; i < tokens.length; i++) {
             // GRANT MINTER ADMIN ROLE - adminMint (skip zora fee)
             target.addPermission(tokens[i], address(fixedPriceErc20), target.PERMISSION_BIT_ADMIN());
@@ -172,10 +171,9 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
 
             minterArguments[i] = abi.encode(tokenRecipient, "");
         }
-        
+
         vm.stopPrank();
 
-        
         // AIRDROP USDC
         uint256 totalValue = (pricePerToken * numTokens * tokens.length);
         vm.prank(admin);
@@ -194,7 +192,7 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
         }
 
         // VERIFY USDC PAYMENT
-        assertEq(usdc.balanceOf(fundsRecipient), totalValue);
+        test_USDCPayouts(totalValue);
         vm.stopPrank();
     }
 
@@ -244,7 +242,7 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
         fixedPriceErc20.requestMint(address(target), newTokenId, numTokens, 0, abi.encode(tokenRecipient, ""));
 
         assertEq(target.balanceOf(tokenRecipient, newTokenId), numTokens);
-        assertEq(usdc.balanceOf(fundsRecipient), totalValue);
+        test_USDCPayouts(totalValue);
 
         vm.stopPrank();
     }
@@ -285,7 +283,7 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
         vm.stopPrank();
 
         uint256 numTokens = 10;
-        uint256 totalValue = (1 ether * numTokens) ;
+        uint256 totalValue = (1 ether * numTokens);
 
         vm.prank(admin);
         usdc.mint(tokenRecipient, totalValue);
@@ -297,8 +295,7 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
         fixedPriceErc20.requestMint(address(target), newTokenId, numTokens, 0, abi.encode(tokenRecipient, "test comment"));
 
         assertEq(target.balanceOf(tokenRecipient, newTokenId), numTokens);
-        assertEq(usdc.balanceOf(fundsRecipient), totalValue);
-
+        test_USDCPayouts(totalValue);
         vm.stopPrank();
     }
 
@@ -531,8 +528,10 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
         vm.startPrank(tokenRecipient);
         usdc.approve(address(fixedPriceErc20), totalValue);
         fixedPriceErc20.requestMint(address(target), newTokenId, numTokens, 0, abi.encode(tokenRecipient, ""));
-
-        assertEq(usdc.balanceOf(fundsRecipient), 10 ether);
+        uint256 protocolFee = 10 ether / 20;
+        uint256 creatorFee = 10 ether - protocolFee;
+        assertEq(usdc.balanceOf(protocolFeeRecipient), protocolFee);
+        assertEq(usdc.balanceOf(fundsRecipient), creatorFee);
     }
 
     function test_MintedPerRecipientGetter() external {
@@ -558,7 +557,7 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
         vm.stopPrank();
 
         uint256 numTokens = 10;
-        
+
         vm.prank(tokenRecipient);
         fixedPriceErc20.requestMint(address(target), newTokenId, numTokens, 0, abi.encode(tokenRecipient, ""));
 
@@ -573,7 +572,14 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
         emit SaleSet(
             address(target),
             newTokenId,
-            ERC20FixedPriceSaleStrategy.SalesConfig({pricePerToken: 0, saleStart: 0, saleEnd: 0, maxTokensPerAddress: 0, fundsRecipient: address(0), erc20Address: address(0)})
+            ERC20FixedPriceSaleStrategy.SalesConfig({
+                pricePerToken: 0,
+                saleStart: 0,
+                saleEnd: 0,
+                maxTokensPerAddress: 0,
+                fundsRecipient: address(0),
+                erc20Address: address(0)
+            })
         );
         target.callSale(newTokenId, fixedPriceErc20, abi.encodeWithSelector(ERC20FixedPriceSaleStrategy.resetSale.selector, newTokenId));
         vm.stopPrank();
@@ -663,5 +669,12 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
         vm.expectRevert(abi.encodeWithSignature("Call_TokenIdMismatch()"));
         target.callSale(tokenId1, fixedPriceErc20, abi.encodeWithSelector(ERC20FixedPriceSaleStrategy.resetSale.selector, tokenId2));
         vm.stopPrank();
+    }
+
+    function test_USDCPayouts(uint256 totalValue) internal {
+        uint256 protocolFee = totalValue / 20;
+        uint256 creatorFee = totalValue - protocolFee;
+        assertEq(usdc.balanceOf(protocolFeeRecipient), protocolFee);
+        assertEq(usdc.balanceOf(fundsRecipient), creatorFee);
     }
 }
