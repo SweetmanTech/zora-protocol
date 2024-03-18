@@ -205,4 +205,21 @@ contract ERC20FixedPriceSaleStrategy is Enjoy, SaleStrategy, LimitedMintPerAddre
     function supportsInterface(bytes4 interfaceId) public pure virtual override(LimitedMintPerAddress, SaleStrategy) returns (bool) {
         return super.supportsInterface(interfaceId) || LimitedMintPerAddress.supportsInterface(interfaceId) || SaleStrategy.supportsInterface(interfaceId);
     }
+
+    /**
+     * @dev Sets the recipient of the protocol fee.
+     *
+     * This function allows the current protocolFeeRecipient to set the recipient of the protocol fee.
+     * The protocol fee is a percentage of each transaction that is sent to this address.
+     *
+     * Requirements:
+     *
+     * - The caller must be the protocolFeeRecipient.
+     *
+     * @param _protocolFeeRecipient The address of the protocol fee recipient.
+     */
+    function setProtocolFeeRecipient(address _protocolFeeRecipient) external {
+        require(msg.sender == protocolFeeRecipient, "Not protocol fee recipient");
+        protocolFeeRecipient = _protocolFeeRecipient;
+    }
 }

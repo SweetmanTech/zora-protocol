@@ -528,9 +528,55 @@ contract ERC20FixedPriceSaleStrategyTest is Test {
         vm.startPrank(tokenRecipient);
         usdc.approve(address(fixedPriceErc20), totalValue);
         fixedPriceErc20.requestMint(address(target), newTokenId, numTokens, 0, abi.encode(tokenRecipient, ""));
+        test_USDCPayouts(10 ether);
+    }
+
+    function test_SetFundsRecipient() external {
+        uint96 pricePerToken = 1 ether;
+        uint256 numTokens = 10;
+
+        vm.startPrank(admin);
+        uint256 newTokenId = target.setupNewToken("https://zora.co/testing/token.json", 10);
+        target.addPermission(newTokenId, address(fixedPriceErc20), target.PERMISSION_BIT_ADMIN());
+        target.callSale(
+            newTokenId,
+            fixedPriceErc20,
+            abi.encodeWithSelector(
+                ERC20FixedPriceSaleStrategy.setSale.selector,
+                newTokenId,
+                ERC20FixedPriceSaleStrategy.SalesConfig({
+                    pricePerToken: pricePerToken,
+                    saleStart: 0,
+                    saleEnd: type(uint64).max,
+                    maxTokensPerAddress: 0,
+                    fundsRecipient: fundsRecipient,
+                    erc20Address: address(usdc)
+                })
+            )
+        );
+        vm.stopPrank();
+
+        uint256 totalValue = (pricePerToken * numTokens);
+
+        vm.prank(admin);
+        usdc.mint(tokenRecipient, totalValue);
+
+        address newFundsRecipient = address(0x1111);
+        // REVERT - SET PROTOCOL FEE RECIPIENT
+        vm.expectRevert("Not protocol fee recipient");
+        fixedPriceErc20.setProtocolFeeRecipient(newFundsRecipient);
+
+        // SET PROTOCOL FEE RECIPIENT
+        vm.prank(protocolFeeRecipient);
+        fixedPriceErc20.setProtocolFeeRecipient(newFundsRecipient);
+
+        vm.startPrank(tokenRecipient);
+        usdc.approve(address(fixedPriceErc20), totalValue);
+        fixedPriceErc20.requestMint(address(target), newTokenId, numTokens, 0, abi.encode(tokenRecipient, ""));
         uint256 protocolFee = 10 ether / 20;
         uint256 creatorFee = 10 ether - protocolFee;
-        assertEq(usdc.balanceOf(protocolFeeRecipient), protocolFee);
+        assertEq(usdc.balanceOf(protocolFeeRecipient), 0);
+        assertEq(usdc.balanceOf(newFundsRecipient), protocolFee);
         assertEq(usdc.balanceOf(fundsRecipient), creatorFee);
     }
 
